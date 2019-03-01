@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -o errexit  # abort when any commands exits with error
+set -o pipefail # abort when any command in a pipe exits with error
+set -o nounset  # abort when any unset variable is used
+set -o noglob # prevent bash from expanding glob
+set -o errtrace # inherits trap on ERR in function and subshell
+if [[ "${trace:=0}" -eq 1 ]];then
+  PS4=' ${LINENO}: '
+  set -x
+  export trace
+fi
+trap 'status="$?"; echo "$(basename $0): status:${status} LINENO:${LINENO} BASH_LINENO:${BASH_LINENO} command:${BASH_COMMAND} functions:$(printf " %s" ${FUNCNAME[@]:-})"; exit ${status}' ERR
+
+self="$(cd $(dirname "${BASH_SOURCE[0]}") && pwd -P)/$(basename "$0")"
+self_path="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+while getopts "a:h?" options; do case $options in
+  a) a="$OPTARG" ;;
+  h|?) help; exit ;;
+esac; done; shift $((OPTIND - 1))
+
+if [[ "$#" -eq 0 ]];then
+  ${0} help
+
+elif [[ "$1" == "help" ]];then shift
+  which bash_scripts >/dev/null && bash_scripts show_commands ${0} || true
+
+elif [[ "$1" == "clear" ]];then shift
+  docker rm -vf dind1 dind2 alpine socat || true
+  docker network rm dind || true
+
+elif [[ "$1" == "setup" ]];then shift
+  docker network create --driver=bridge --subnet=10.0.0.0/24 dind
+  docker run -d --name dind1 --privileged --network dind docker:18.09-dind
+  docker run -d --name dind2 --privileged --network dind docker:18.09-dind
+  docker run -t -d --name alpine --network dind alpine /bin/sh
+
+  docker exec -it alpine /bin/sh -c 'apk update; apk add bash curl'
+  docker exec -it dind1 /bin/sh -c 'apk update; apk add bash curl'
+  docker exec -it dind2 /bin/sh -c 'apk update; apk add bash curl'
+
+  docker exec -it dind1 /bin/sh -c 'docker run -d --name=consul -p 8500:8500 -P -e CONSUL_BIND_INTERFACE=eth0 consul'
+
+  docker exec -it dind2 /bin/bash -c 'docker run -d --network host --name=registrator -v /var/run/docker.sock:/tmp/docker.sock -P gliderlabs/registrator consul://dind1:8500'
+
+elif [[ "$1" == "check" ]];then shift
+  docker exec -it alpine /bin/bash -c "curl http://$(${0} ip dind1):8500/v1/agent/members"
+
+elif [[ "$1" == "services" ]];then shift
+  docker exec -it alpine /bin/bash -c "curl http://$(${0} ip dind1):8500/v1/catalog/services"
+
+elif [[ "$1" == "consul_url" ]];then shift
+  url="$1"; shift
+  docker exec -it alpine /bin/bash -c "curl http://$(${0} ip dind1):8500/v1/${url}"
+
+elif [[ "$1" == "launch" ]];then shift
+  docker exec -it dind2 /bin/bash -c 'docker run -d --name=pushgateway -P prom/pushgateway:v0.4.0'
+
+elif [[ "$1" == "socat" ]];then shift
+  docker run --name socat -d --network dind -p 8500:8500 alpine \
+    /bin/sh -c "\
+    apk update;\
+    apk add socat; \
+    socat TCP-LISTEN:8500,fork TCP:dind1:8500\
+    "
+
+  
+elif [[ "$1" == "ip" ]];then shift
+  container="$1"; shift
+  docker inspect ${container} | jq -r 'map(.NetworkSettings.Networks.dind.IPAddress)[]'
+
+else
+  echo "unknown command: $@" >&2
+  exit 1
+fi
+
