@@ -40,9 +40,6 @@ elif [[ "$1" == "setup" ]];then shift
   docker run -d --name dind3 --privileged --network dind docker:18.09-dind
   docker run -t -d --name alpine --network dind alpine /bin/sh
 
-  # docker exec -it dind1 /bin/sh -c 'apk update; apk add bash curl'
-  # docker exec -it dind2 /bin/sh -c 'apk update; apk add bash curl'
-
   docker exec -it dind1 /bin/sh -c "\
     docker run -d \
       --network host \
@@ -50,7 +47,6 @@ elif [[ "$1" == "setup" ]];then shift
       -e CONSUL_BIND_INTERFACE=eth0 \
       consul:1.4.2\
       "
-      # -p 8500:8500 -P \
 
   docker exec -it dind2 /bin/sh -c "\
     docker run -d \
@@ -61,27 +57,10 @@ elif [[ "$1" == "setup" ]];then shift
       -p 8500:8500 \
       -p 8600:8600 \
       -e 'CONSUL_LOCAL_CONFIG={\"leave_on_terminate\": true}' \
+      -e SERVICE_IGNORE=true \
       consul:1.4.2 \
       agent -advertise=$(${0} ip dind2) -client=0.0.0.0 -join=$(${0} ip dind1)
       "
-      # agent -bind=127.0.0.1 -client=0.0.0.0 -join=dind1
-      # agent -bind=$(${0} ip dind2) -client=0.0.0.0 -join=dind1
-      # -p 8301:8301 \
-      # -p 8302:8302 \
-      # --network host \
-      # -e CONSUL_BIND_INTERFACE=eth0 \
-      # agent -bind=<external ip> -retry-join=  
-      # -p 8300:8300 \
-      # -p 8301-8302:8301-8302 \
-      # -p 8301-8302:8301-8302/udp \
-      # -p 8500:8500 \
-      # -p 8600:8600 \
-
-
-# EXPOSE 8300
-# EXPOSE 8301 8301/udp 8302 8302/udp
-# EXPOSE 8500 8600 8600/udp
-
 
   docker run --name socat -d --network dind -p 8500:8500 alpine /bin/sh -c "\
     apk update;\
@@ -95,20 +74,13 @@ elif [[ "$1" == "setup" ]];then shift
     docker run -d \
       --name=registrator \
       -v /var/run/docker.sock:/tmp/docker.sock \
-      -P \
       --link agent \
       gliderlabs/registrator:v7 \
       consul://agent:8500\
       "
-      # consul://localhost:8500\
-      # --network host \
-      # consul://dind1:8500\
-      # -ip $(${0} ip dind2)\
-      # -internal \
 
   docker exec -it dind2 /bin/sh -c "\
     docker run -d \
-      --name=pushgateway \
       -P \
       -e SERVICE_NAME=foo \
       -e SERVICE_TAGS=monitor,bla \
@@ -129,12 +101,28 @@ elif [[ "$1" == "setup" ]];then shift
       -p 8300:8300 \
       -p 8301-8302:8301-8302 \
       -p 8301-8302:8301-8302/udp \
-
       -p 8500:8500 \
       -p 8600:8600 \
       -e 'CONSUL_LOCAL_CONFIG={\"leave_on_terminate\": true}' \
+      -e SERVICE_IGNORE=true \
       consul:1.4.2 \
-      agent -advertise=$(${0} ip dind3) -client=0.0.0.0 -join=$(${0} ip dind1)
+      agent -advertise=$(${0} ip dind3) -client=0.0.0.0 -join=$(${0} ip dind1)\
+      "
+  docker exec -it dind3 /bin/sh -c "\
+    docker run -d \
+      --name=registrator \
+      -v /var/run/docker.sock:/tmp/docker.sock \
+      --link agent \
+      gliderlabs/registrator:v7 \
+      consul://agent:8500\
+      "
+
+  docker exec -it dind3 /bin/sh -c "\
+    docker run -d \
+      -P \
+      -e SERVICE_NAME=abc \
+      -e SERVICE_TAGS=monitor \
+      prom/pushgateway:v0.4.0\
       "
 
   docker cp $(pwd)/prometheus.yml dind3:/root/prometheus.yml
@@ -144,6 +132,7 @@ elif [[ "$1" == "setup" ]];then shift
       -p 9090:9090 \
       --link agent \
       -v /root/prometheus.yml:/etc/prometheus-config/prometheus.yml \
+      -e SERVICE_TAGS=monitor \
       prom/prometheus:v2.7.1 \
       --config.file=/etc/prometheus-config/prometheus.yml \
       "
@@ -154,14 +143,16 @@ elif [[ "$1" == "setup" ]];then shift
     "
 
   # ${0} services
-  ${0} consul_url catalog/service/pushgateway
+  # ${0} consul_url catalog/service/pushgateway
+elif [[ "$1" == "show" ]];then shift
+  echo "consul members:"
+  ${0} consul_url agent/members | jq . | jq -c 'map({Addr,role:(.Tags.role)})[]'
 
+  echo "consul services:"
+  ${0} consul_url catalog/services | jq . | jq -c 'to_entries[]'
 
-elif [[ "$1" == "members" ]];then shift
-  ${0} consul_url agent/members
-
-elif [[ "$1" == "services" ]];then shift
-  ${0} consul_url catalog/services
+  echo "prometheus targets:"
+  curl -s "http://localhost:9090/api/v1/targets" | jq -c '.data.activeTargets|map(.labels)[]'
 
 elif [[ "$1" == "consul_url" ]];then shift
   url="$1"; shift
