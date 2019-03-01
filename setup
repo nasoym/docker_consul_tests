@@ -26,48 +26,157 @@ elif [[ "$1" == "help" ]];then shift
   which bash_scripts >/dev/null && bash_scripts show_commands ${0} || true
 
 elif [[ "$1" == "clear" ]];then shift
-  docker rm -vf dind1 dind2 alpine socat || true
+  docker rm -vf dind1 dind2 dind3 alpine socat prom_socat || true
   docker network rm dind || true
+
+# elif [[ "$1" == "volumes" ]];then shift
+#   docker volume create dind1
+#   docker volume create dind2
 
 elif [[ "$1" == "setup" ]];then shift
   docker network create --driver=bridge --subnet=10.0.0.0/24 dind
   docker run -d --name dind1 --privileged --network dind docker:18.09-dind
   docker run -d --name dind2 --privileged --network dind docker:18.09-dind
+  docker run -d --name dind3 --privileged --network dind docker:18.09-dind
   docker run -t -d --name alpine --network dind alpine /bin/sh
 
-  docker exec -it alpine /bin/sh -c 'apk update; apk add bash curl'
-  docker exec -it dind1 /bin/sh -c 'apk update; apk add bash curl'
-  docker exec -it dind2 /bin/sh -c 'apk update; apk add bash curl'
+  # docker exec -it dind1 /bin/sh -c 'apk update; apk add bash curl'
+  # docker exec -it dind2 /bin/sh -c 'apk update; apk add bash curl'
 
-  docker exec -it dind1 /bin/sh -c 'docker run -d --name=consul -p 8500:8500 -P -e CONSUL_BIND_INTERFACE=eth0 consul'
+  docker exec -it dind1 /bin/sh -c "\
+    docker run -d \
+      --network host \
+      --name=consul \
+      -e CONSUL_BIND_INTERFACE=eth0 \
+      consul:1.4.2\
+      "
+      # -p 8500:8500 -P \
 
-  docker exec -it dind2 /bin/bash -c 'docker run -d --network host --name=registrator -v /var/run/docker.sock:/tmp/docker.sock -P gliderlabs/registrator consul://dind1:8500'
+  docker exec -it dind2 /bin/sh -c "\
+    docker run -d \
+      --name=agent \
+      -p 8300:8300 \
+      -p 8301-8302:8301-8302 \
+      -p 8301-8302:8301-8302/udp \
+      -p 8500:8500 \
+      -p 8600:8600 \
+      -e 'CONSUL_LOCAL_CONFIG={\"leave_on_terminate\": true}' \
+      consul:1.4.2 \
+      agent -advertise=$(${0} ip dind2) -client=0.0.0.0 -join=$(${0} ip dind1)
+      "
+      # agent -bind=127.0.0.1 -client=0.0.0.0 -join=dind1
+      # agent -bind=$(${0} ip dind2) -client=0.0.0.0 -join=dind1
+      # -p 8301:8301 \
+      # -p 8302:8302 \
+      # --network host \
+      # -e CONSUL_BIND_INTERFACE=eth0 \
+      # agent -bind=<external ip> -retry-join=  
+      # -p 8300:8300 \
+      # -p 8301-8302:8301-8302 \
+      # -p 8301-8302:8301-8302/udp \
+      # -p 8500:8500 \
+      # -p 8600:8600 \
 
-elif [[ "$1" == "check" ]];then shift
-  docker exec -it alpine /bin/bash -c "curl http://$(${0} ip dind1):8500/v1/agent/members"
 
-elif [[ "$1" == "services" ]];then shift
-  docker exec -it alpine /bin/bash -c "curl http://$(${0} ip dind1):8500/v1/catalog/services"
+# EXPOSE 8300
+# EXPOSE 8301 8301/udp 8302 8302/udp
+# EXPOSE 8500 8600 8600/udp
 
-elif [[ "$1" == "consul_url" ]];then shift
-  url="$1"; shift
-  docker exec -it alpine /bin/bash -c "curl http://$(${0} ip dind1):8500/v1/${url}"
 
-elif [[ "$1" == "launch" ]];then shift
-  docker exec -it dind2 /bin/bash -c 'docker run -d --name=pushgateway -P prom/pushgateway:v0.4.0'
-
-elif [[ "$1" == "socat" ]];then shift
-  docker run --name socat -d --network dind -p 8500:8500 alpine \
-    /bin/sh -c "\
+  docker run --name socat -d --network dind -p 8500:8500 alpine /bin/sh -c "\
     apk update;\
     apk add socat; \
     socat TCP-LISTEN:8500,fork TCP:dind1:8500\
     "
 
-  
+  docker exec -it alpine /bin/sh -c 'apk update; apk add curl'
+
+  docker exec -it dind2 /bin/sh -c "\
+    docker run -d \
+      --name=registrator \
+      -v /var/run/docker.sock:/tmp/docker.sock \
+      -P \
+      --link agent \
+      gliderlabs/registrator:v7 \
+      consul://agent:8500\
+      "
+      # consul://localhost:8500\
+      # --network host \
+      # consul://dind1:8500\
+      # -ip $(${0} ip dind2)\
+      # -internal \
+
+  docker exec -it dind2 /bin/sh -c "\
+    docker run -d \
+      --name=pushgateway \
+      -P \
+      -e SERVICE_NAME=foo \
+      -e SERVICE_TAGS=monitor,bla \
+      prom/pushgateway:v0.4.0\
+      "
+
+  docker exec -it dind2 /bin/sh -c "\
+    docker run -d \
+      -P \
+      -e SERVICE_NAME=bla \
+      -e SERVICE_TAGS=monitor,bla,foo,bar \
+      prom/pushgateway:v0.4.0\
+      "
+
+  docker exec -it dind3 /bin/sh -c "\
+    docker run -d \
+      --name=agent \
+      -p 8300:8300 \
+      -p 8301-8302:8301-8302 \
+      -p 8301-8302:8301-8302/udp \
+
+      -p 8500:8500 \
+      -p 8600:8600 \
+      -e 'CONSUL_LOCAL_CONFIG={\"leave_on_terminate\": true}' \
+      consul:1.4.2 \
+      agent -advertise=$(${0} ip dind3) -client=0.0.0.0 -join=$(${0} ip dind1)
+      "
+
+  docker cp $(pwd)/prometheus.yml dind3:/root/prometheus.yml
+  docker exec -it dind3 /bin/sh -c "\
+    docker run -d \
+      --name=prometheus \
+      -p 9090:9090 \
+      --link agent \
+      -v /root/prometheus.yml:/etc/prometheus-config/prometheus.yml \
+      prom/prometheus:v2.7.1 \
+      --config.file=/etc/prometheus-config/prometheus.yml \
+      "
+  docker run --name prom_socat -d --network dind -p 9090:9090 alpine /bin/sh -c "\
+    apk update;\
+    apk add socat; \
+    socat TCP-LISTEN:9090,fork TCP:dind3:9090\
+    "
+
+  # ${0} services
+  ${0} consul_url catalog/service/pushgateway
+
+
+elif [[ "$1" == "members" ]];then shift
+  ${0} consul_url agent/members
+
+elif [[ "$1" == "services" ]];then shift
+  ${0} consul_url catalog/services
+
+elif [[ "$1" == "consul_url" ]];then shift
+  url="$1"; shift
+  docker exec -it alpine /bin/sh -c "curl http://$(${0} ip dind1):8500/v1/${url}"
+
+elif [[ "$1" == "alpine_curl" ]];then shift
+  url="$1"; shift
+  docker exec -it alpine /bin/sh -c "curl -i -s http://${url}"
+
 elif [[ "$1" == "ip" ]];then shift
   container="$1"; shift
   docker inspect ${container} | jq -r 'map(.NetworkSettings.Networks.dind.IPAddress)[]'
+
+elif [[ "$1" == "network" ]];then shift
+  docker network inspect dind | jq 'map(.Containers|map({Name,IPv4Address}))[]'
 
 else
   echo "unknown command: $@" >&2
