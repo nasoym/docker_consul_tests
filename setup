@@ -52,15 +52,17 @@ elif [[ "$1" == "setup" ]];then shift
     docker run -d \
       --name=agent \
       -p 8300:8300 \
-      -p 8301-8302:8301-8302 \
-      -p 8301-8302:8301-8302/udp \
       -p 8500:8500 \
-      -p 8600:8600 \
       -e 'CONSUL_LOCAL_CONFIG={\"leave_on_terminate\": true}' \
       -e SERVICE_IGNORE=true \
       consul:1.4.2 \
       agent -advertise=$(${0} ip dind2) -client=0.0.0.0 -join=$(${0} ip dind1)
       "
+      # -p 8300:8300 \
+      # -p 8301-8302:8301-8302 \
+      # -p 8301-8302:8301-8302/udp \
+      # -p 8500:8500 \
+      # -p 8600:8600 \
 
   docker run --name socat -d --network dind -p 8500:8500 alpine /bin/sh -c "\
     apk update;\
@@ -99,10 +101,7 @@ elif [[ "$1" == "setup" ]];then shift
     docker run -d \
       --name=agent \
       -p 8300:8300 \
-      -p 8301-8302:8301-8302 \
-      -p 8301-8302:8301-8302/udp \
       -p 8500:8500 \
-      -p 8600:8600 \
       -e 'CONSUL_LOCAL_CONFIG={\"leave_on_terminate\": true}' \
       -e SERVICE_IGNORE=true \
       consul:1.4.2 \
@@ -142,8 +141,6 @@ elif [[ "$1" == "setup" ]];then shift
     socat TCP-LISTEN:9090,fork TCP:dind3:9090\
     "
 
-  # ${0} services
-  # ${0} consul_url catalog/service/pushgateway
 elif [[ "$1" == "show" ]];then shift
   echo "consul members:"
   ${0} consul_url agent/members | jq . | jq -c 'map({Addr,role:(.Tags.role)})[]'
