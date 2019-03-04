@@ -134,12 +134,13 @@ elif [[ "$1" == "setup" ]];then shift
       prom/pushgateway:${pushgateway_version}\
       "
 
-  docker cp $(pwd)/alertmanager.yml dind3:/root/alertmanager.yml
+  docker exec -it dind3 /bin/sh -c "mkdir -p /root/alertmanager"
+  docker cp $(pwd)/alertmanager.yml dind3:/root/alertmanager/alertmanager.yml
   docker exec -it dind3 /bin/sh -c "\
     docker run -d \
       --name=alertmanager \
       -p 9093:9093 \
-      -v /root/alertmanager.yml:/etc/alertmanager-config/alertmanager.yml \
+      -v /root/alertmanager:/etc/alertmanager-config/ \
       -e SERVICE_TAGS=monitor \
       prom/alertmanager:${alertmanager_version} \
       --config.file=/etc/alertmanager-config/alertmanager.yml \
@@ -150,16 +151,18 @@ elif [[ "$1" == "setup" ]];then shift
     socat TCP-LISTEN:9093,fork TCP:dind3:9093\
     "
 
-  docker cp $(pwd)/prometheus.yml dind3:/root/prometheus.yml
-  docker cp $(pwd)/job_down_alert.rules dind3:/root/job_down_alert.rules
+  docker exec -it dind3 /bin/sh -c "mkdir -p /root/prometheus-config"
+  docker exec -it dind3 /bin/sh -c "mkdir -p /root/prometheus-rules"
+  docker cp $(pwd)/prometheus.yml dind3:/root/prometheus-config/prometheus.yml
+  docker cp $(pwd)/job_down_alert.rules dind3:/root/prometheus-rules/job_down_alert.rules
   docker exec -it dind3 /bin/sh -c "\
     docker run -d \
       --name=prometheus \
       -p 9090:9090 \
       --link consul \
       --link alertmanager \
-      -v /root/prometheus.yml:/etc/prometheus-config/prometheus.yml \
-      -v /root/job_down_alert.rules:/etc/prometheus-rules/job_down_alert.rules \
+      -v /root/prometheus-config:/etc/prometheus-config \
+      -v /root/prometheus-rules:/etc/prometheus-rules \
       -e SERVICE_TAGS=monitor \
       prom/prometheus:${prometheus_version} \
       --config.file=/etc/prometheus-config/prometheus.yml \

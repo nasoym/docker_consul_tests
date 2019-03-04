@@ -8,3 +8,7 @@ groups:
       severity: P1
     annotations:
       summary: Job {{ $labels.job }} is down
+
+  - record: job_is_down
+    expr: sum(ALERTS{alertname="JobIsDown"}) by (alertname) or absent(ALERTS{alertname="JobIsDown"}) - 1
+

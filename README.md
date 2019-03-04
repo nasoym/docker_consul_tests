@@ -5,6 +5,7 @@
 * <https://hub.docker.com/_/consul>
 
 
-v0.16.1 prom/alertmanager
 
+
+sum(ALERTS{alertname="JobIsDown"}) by (alertname) or absent(ALERTS{alertname="JobIsDown"}) - 1
 
