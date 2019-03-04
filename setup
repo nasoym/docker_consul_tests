@@ -26,7 +26,7 @@ elif [[ "$1" == "help" ]];then shift
   which bash_scripts >/dev/null && bash_scripts show_commands ${0} || true
 
 elif [[ "$1" == "clear" ]];then shift
-  docker rm -vf dind1 dind2 dind3 alpine socat prom_socat || true
+  docker rm -vf dind1 dind2 dind3 alpine socat prom_socat alertmanager_socat || true
   docker network rm dind || true
 
 # elif [[ "$1" == "volumes" ]];then shift
@@ -40,106 +40,138 @@ elif [[ "$1" == "setup" ]];then shift
   docker run -d --name dind3 --privileged --network dind docker:18.09-dind
   docker run -t -d --name alpine --network dind alpine /bin/sh
 
+  : ${consul_version:="v0.6.4"}
+  # : ${consul_version:="1.4.2"}
+  : ${prometheus_version:="v2.7.2"}
+  : ${pushgateway_version:="v0.7.0"}
+  : ${registrator_version:="v7"}
+  : ${alertmanager_version:="v0.16.1"}
+
   docker exec -it dind1 /bin/sh -c "\
     docker run -d \
-      --network host \
       --name=consul \
-      -e CONSUL_BIND_INTERFACE=eth0 \
-      consul:1.4.2\
-      "
-
-  docker exec -it dind2 /bin/sh -c "\
-    docker run -d \
-      --name=agent \
-      -p 8300:8300 \
+      -p 8300-8302:8300-8302 \
+      -p 8301-8302:8301-8302/udp \
       -p 8500:8500 \
-      -e 'CONSUL_LOCAL_CONFIG={\"leave_on_terminate\": true}' \
-      -e SERVICE_IGNORE=true \
-      consul:1.4.2 \
-      agent -advertise=$(${0} ip dind2) -client=0.0.0.0 -join=$(${0} ip dind1)
+      -p 8600:8600 \
+      -p 8600:8600/udp \
+      consul:${consul_version}\
+      agent -dev -ui -server -advertise=$(${0} ip dind1) -client=0.0.0.0 \
+      -bootstrap-expect=1 \
       "
-      # -p 8300:8300 \
-      # -p 8301-8302:8301-8302 \
-      # -p 8301-8302:8301-8302/udp \
-      # -p 8500:8500 \
-      # -p 8600:8600 \
-
+      # -e CONSUL_BIND_INTERFACE=eth0 \
+      # agent -server -advertise=$(${0} ip dind1) -client=0.0.0.0 \
+      # -e CONSUL_BIND_INTERFACE=eth0 \
+      # --network host \
   docker run --name socat -d --network dind -p 8500:8500 alpine /bin/sh -c "\
     apk update;\
     apk add socat; \
     socat TCP-LISTEN:8500,fork TCP:dind1:8500\
     "
 
-  docker exec -it alpine /bin/sh -c 'apk update; apk add curl'
-
+  docker exec -it dind2 /bin/sh -c "\
+    docker run -d \
+      --name=consul \
+      -p 8301:8301 \
+      -p 8301:8301/udp \
+      -p 8500:8500 \
+      -e 'CONSUL_LOCAL_CONFIG={\"leave_on_terminate\": true}' \
+      -e SERVICE_IGNORE=true \
+      consul:${consul_version} \
+      agent -advertise=$(${0} ip dind2) -client=0.0.0.0 -join=$(${0} ip dind1)
+      "
   docker exec -it dind2 /bin/sh -c "\
     docker run -d \
       --name=registrator \
       -v /var/run/docker.sock:/tmp/docker.sock \
-      --link agent \
-      gliderlabs/registrator:v7 \
-      consul://agent:8500\
+      --link consul \
+      gliderlabs/registrator:${registrator_version} \
+      consul://consul:8500\
       "
 
   docker exec -it dind2 /bin/sh -c "\
     docker run -d \
+      --name=foo \
       -P \
       -e SERVICE_NAME=foo \
       -e SERVICE_TAGS=monitor,bla \
-      prom/pushgateway:v0.4.0\
+      prom/pushgateway:${pushgateway_version}\
       "
-
   docker exec -it dind2 /bin/sh -c "\
     docker run -d \
+      --name=bla \
       -P \
       -e SERVICE_NAME=bla \
       -e SERVICE_TAGS=monitor,bla,foo,bar \
-      prom/pushgateway:v0.4.0\
+      prom/pushgateway:${pushgateway_version}\
       "
 
   docker exec -it dind3 /bin/sh -c "\
     docker run -d \
-      --name=agent \
-      -p 8300:8300 \
+      --name=consul \
+      -p 8301:8301 \
+      -p 8301:8301/udp \
       -p 8500:8500 \
       -e 'CONSUL_LOCAL_CONFIG={\"leave_on_terminate\": true}' \
       -e SERVICE_IGNORE=true \
-      consul:1.4.2 \
+      consul:${consul_version} \
       agent -advertise=$(${0} ip dind3) -client=0.0.0.0 -join=$(${0} ip dind1)\
       "
   docker exec -it dind3 /bin/sh -c "\
     docker run -d \
       --name=registrator \
       -v /var/run/docker.sock:/tmp/docker.sock \
-      --link agent \
-      gliderlabs/registrator:v7 \
-      consul://agent:8500\
+      --link consul \
+      gliderlabs/registrator:${registrator_version} \
+      consul://consul:8500\
       "
-
   docker exec -it dind3 /bin/sh -c "\
     docker run -d \
+      --name=abc \
       -P \
       -e SERVICE_NAME=abc \
       -e SERVICE_TAGS=monitor \
-      prom/pushgateway:v0.4.0\
+      prom/pushgateway:${pushgateway_version}\
       "
 
+  docker cp $(pwd)/alertmanager.yml dind3:/root/alertmanager.yml
+  docker exec -it dind3 /bin/sh -c "\
+    docker run -d \
+      --name=alertmanager \
+      -p 9093:9093 \
+      -v /root/alertmanager.yml:/etc/alertmanager-config/alertmanager.yml \
+      -e SERVICE_TAGS=monitor \
+      prom/alertmanager:${alertmanager_version} \
+      --config.file=/etc/alertmanager-config/alertmanager.yml \
+      "
+  docker run --name alertmanager_socat -d --network dind -p 9093:9093 alpine /bin/sh -c "\
+    apk update;\
+    apk add socat; \
+    socat TCP-LISTEN:9093,fork TCP:dind3:9093\
+    "
+
   docker cp $(pwd)/prometheus.yml dind3:/root/prometheus.yml
+  docker cp $(pwd)/job_down_alert.rules dind3:/root/job_down_alert.rules
   docker exec -it dind3 /bin/sh -c "\
     docker run -d \
       --name=prometheus \
       -p 9090:9090 \
-      --link agent \
+      --link consul \
+      --link alertmanager \
       -v /root/prometheus.yml:/etc/prometheus-config/prometheus.yml \
+      -v /root/job_down_alert.rules:/etc/prometheus-rules/job_down_alert.rules \
       -e SERVICE_TAGS=monitor \
-      prom/prometheus:v2.7.1 \
+      prom/prometheus:${prometheus_version} \
       --config.file=/etc/prometheus-config/prometheus.yml \
+      --web.enable-lifecycle \
       "
   docker run --name prom_socat -d --network dind -p 9090:9090 alpine /bin/sh -c "\
     apk update;\
     apk add socat; \
     socat TCP-LISTEN:9090,fork TCP:dind3:9090\
     "
+
+  docker exec -it alpine /bin/sh -c 'apk update; apk add curl'
 
 elif [[ "$1" == "show" ]];then shift
   echo "consul members:"

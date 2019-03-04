@@ -1,19 +1,50 @@
 global:
-  scrape_interval: 1s
-  scrape_timeout: 1s
+  scrape_interval: 5s
+  scrape_timeout: 4s
+
+rule_files:
+  - /etc/prometheus-rules/*.rules
+
+
+alerting:
+  alertmanagers:
+    - scheme: http
+      path_prefix: /alertmanager
+      static_configs:
+        - targets: ['alertmanager:9093']
 
 scrape_configs:
   - job_name: 'all'
-    scrape_interval: 5s
-    scrape_timeout: 4s
     consul_sd_configs:
-      - server: 'agent:8500'
+      - server: 'consul:8500'
     relabel_configs:
       - source_labels: [__meta_consul_tags]
         regex: .*monitor.*
         action: keep
       - source_labels: ['__meta_consul_service']
         target_label: job
-
-
-
+      - source_labels: ['__meta_consul_tags']
+        target_label: tags
+      - source_labels: ['__meta_consul_address']
+        target_label: instance
+      - source_labels: ['__meta_consul_service_id']
+        action: replace
+        target_label: container
+        regex: "[^:]*:([^:]+):.*"
+        replacement: $1
+      - source_labels: ['__meta_consul_tags']
+        action: replace
+        target_label: __metrics_path__
+        regex: "^.*, *path=/?([^,]*),.*$"
+        replacement: "/${1}"
+      # - source_labels: ['__meta_consul_tags']
+      #   action: replace
+      #   target_label: stage
+      #   regex: "^.*, *stage=([^,]*),.*$"
+      #   replacement: "${1}"
+      # - source_labels: ['__meta_consul_tags']
+      #   action: replace
+      #   target_label: instance
+      #   regex: "^.*, *instance=([^,]*),.*$"
+      #   replacement: "${1}"
+      #

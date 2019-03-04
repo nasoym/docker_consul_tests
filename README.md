@@ -5,3 +5,6 @@
 * <https://hub.docker.com/_/consul>
 
 
+v0.16.1 prom/alertmanager
+
+

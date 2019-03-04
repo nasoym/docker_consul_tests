@@ -1,0 +1,10 @@
+groups:
+- name: job_down
+  rules:
+  - alert: JobIsDown
+    expr: sum(up offset 1m) by (job) unless sum(up) by (job)
+    # for: 1m
+    labels:
+      severity: P1
+    annotations:
+      summary: Job {{ $labels.job }} is down

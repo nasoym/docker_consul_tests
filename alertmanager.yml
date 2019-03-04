@@ -1,0 +1,13 @@
+global:
+  resolve_timeout: 1m
+
+route:
+  receiver: default-receiver
+  group_wait: 1s
+  group_interval: 1s
+  repeat_interval: 30s
+  group_by: [alertname, instance]
+
+receivers:
+- name: default-receiver
+
