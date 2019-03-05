@@ -175,12 +175,14 @@ elif [[ "$1" == "setup" ]];then shift
 
   docker exec -it alpine /bin/sh -c 'apk update; apk add curl'
 
-elif [[ "$1" == "update_files" ]];then shift
+elif [[ "$1" == "update" ]];then shift
   docker cp ${self_path}/alertmanager.yml dind3:/root/alertmanager/alertmanager.yml
   docker cp ${self_path}/prometheus.yml dind3:/root/prometheus-config/prometheus.yml
   docker cp ${self_path}/rules.rules dind3:/root/prometheus-rules/rules.rules
+  docker cp ${self_path}/targets.json dind3:/root/prometheus-targets/targets.json
   curl -i -XPOST "http://localhost:9090/-/reload"
   curl -i -XPOST "http://localhost:9093/-/reload"
+
 
 elif [[ "$1" == "show" ]];then shift
   echo "consul members:"
@@ -200,6 +202,18 @@ elif [[ "$1" == "browser" ]];then shift
 elif [[ "$1" == "consul_url" ]];then shift
   url="$1"; shift
   docker exec -it alpine /bin/sh -c "curl http://$(${0} ip dind1):8500/v1/${url}"
+
+elif [[ "$1" == "consul_address" ]];then shift
+  service_name="$1"; shift
+  ${0} consul_url catalog/service/${service_name} \
+    | jq -r 'map("\(.Address):\(.ServicePort)")[]'
+
+elif [[ "$1" == "push" ]];then shift
+  : ${service_name:="foo"}
+  : ${name:="alert"}
+  : ${value:="1"}
+  : ${labels:=""}
+  docker exec alpine /bin/sh -c "echo '${name}{${labels}} ${value}' | curl -XPUT --data-binary @- -i -s http://$(${0} consul_address ${service_name})/metrics/job/${name}"
 
 elif [[ "$1" == "alpine_curl" ]];then shift
   url="$1"; shift

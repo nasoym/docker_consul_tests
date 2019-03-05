@@ -6,7 +6,7 @@
     "labels": {
       "stage": "ps",
       "tier": "prometheus",
-      "job": "prometheus",
+      "job": "local_prometheus",
       "instance": "localhost"
     }
   }
