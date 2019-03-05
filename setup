@@ -29,10 +29,6 @@ elif [[ "$1" == "clear" ]];then shift
   docker rm -vf dind1 dind2 dind3 alpine socat prom_socat alertmanager_socat || true
   docker network rm dind || true
 
-# elif [[ "$1" == "volumes" ]];then shift
-#   docker volume create dind1
-#   docker volume create dind2
-
 elif [[ "$1" == "setup" ]];then shift
   docker network create --driver=bridge --subnet=10.0.0.0/24 dind
   docker run -d --name dind1 --privileged --network dind docker:18.09-dind
@@ -135,7 +131,7 @@ elif [[ "$1" == "setup" ]];then shift
       "
 
   docker exec -it dind3 /bin/sh -c "mkdir -p /root/alertmanager"
-  docker cp $(pwd)/alertmanager.yml dind3:/root/alertmanager/alertmanager.yml
+  docker cp ${self_path}/alertmanager.yml dind3:/root/alertmanager/alertmanager.yml
   docker exec -it dind3 /bin/sh -c "\
     docker run -d \
       --name=alertmanager \
@@ -151,21 +147,24 @@ elif [[ "$1" == "setup" ]];then shift
     socat TCP-LISTEN:9093,fork TCP:dind3:9093\
     "
 
+  docker exec -it dind3 /bin/sh -c "mkdir -p /root/prometheus-targets"
   docker exec -it dind3 /bin/sh -c "mkdir -p /root/prometheus-config"
   docker exec -it dind3 /bin/sh -c "mkdir -p /root/prometheus-rules"
-  docker cp $(pwd)/prometheus.yml dind3:/root/prometheus-config/prometheus.yml
-  docker cp $(pwd)/job_down_alert.rules dind3:/root/prometheus-rules/job_down_alert.rules
+  docker cp ${self_path}/prometheus.yml dind3:/root/prometheus-config/prometheus.yml
+  docker cp ${self_path}/rules.rules dind3:/root/prometheus-rules/rules.rules
+  docker cp ${self_path}/targets.json dind3:/root/prometheus-targets/targets.json
   docker exec -it dind3 /bin/sh -c "\
     docker run -d \
       --name=prometheus \
       -p 9090:9090 \
       --link consul \
       --link alertmanager \
-      -v /root/prometheus-config:/etc/prometheus-config \
-      -v /root/prometheus-rules:/etc/prometheus-rules \
+      -v /root/prometheus-config:/etc/prometheus/prometheus-config \
+      -v /root/prometheus-rules:/etc/prometheus/prometheus-rules \
+      -v /root/prometheus-targets:/etc/prometheus/prometheus-targets \
       -e SERVICE_TAGS=monitor \
       prom/prometheus:${prometheus_version} \
-      --config.file=/etc/prometheus-config/prometheus.yml \
+      --config.file=/etc/prometheus/prometheus-config/prometheus.yml \
       --web.enable-lifecycle \
       "
   docker run --name prom_socat -d --network dind -p 9090:9090 alpine /bin/sh -c "\
@@ -176,6 +175,13 @@ elif [[ "$1" == "setup" ]];then shift
 
   docker exec -it alpine /bin/sh -c 'apk update; apk add curl'
 
+elif [[ "$1" == "update_files" ]];then shift
+  docker cp ${self_path}/alertmanager.yml dind3:/root/alertmanager/alertmanager.yml
+  docker cp ${self_path}/prometheus.yml dind3:/root/prometheus-config/prometheus.yml
+  docker cp ${self_path}/rules.rules dind3:/root/prometheus-rules/rules.rules
+  curl -i -XPOST "http://localhost:9090/-/reload"
+  curl -i -XPOST "http://localhost:9093/-/reload"
+
 elif [[ "$1" == "show" ]];then shift
   echo "consul members:"
   ${0} consul_url agent/members | jq . | jq -c 'map({Addr,role:(.Tags.role)})[]'
@@ -185,6 +191,11 @@ elif [[ "$1" == "show" ]];then shift
 
   echo "prometheus targets:"
   curl -s "http://localhost:9090/api/v1/targets" | jq -c '.data.activeTargets|map(.labels)[]'
+
+elif [[ "$1" == "browser" ]];then shift
+  browser_open_url "http://localhost:9090"
+  browser_open_url "http://localhost:9093"
+  browser_open_url "http://localhost:8500"
 
 elif [[ "$1" == "consul_url" ]];then shift
   url="$1"; shift

@@ -12,3 +12,12 @@ groups:
   - record: job_is_down
     expr: sum(ALERTS{alertname="JobIsDown"}) by (alertname) or absent(ALERTS{alertname="JobIsDown"}) - 1
 
+- name: alert
+  rules:
+  - alert: Alert
+    expr: alert >= 1
+    labels:
+      severity: P1
+    annotations:
+      summary: alert is triggered
+
