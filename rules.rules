@@ -12,6 +12,12 @@ groups:
   - record: job_is_down
     expr: sum(ALERTS{alertname="JobIsDown"}) by (alertname) or absent(ALERTS{alertname="JobIsDown"}) - 1
 
+  - record: job_is_down2
+    expr: max(max_over_time(up[7d])) by (job) unless sum by(job) (up)
+
+  - record: job_is_down3
+    expr: max(ceil(avg_over_time(up[7d]) > 0.75)) by (job) unless sum by(job) (up)
+
 - name: alert
   rules:
   - alert: Alert
