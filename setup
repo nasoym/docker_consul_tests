@@ -211,10 +211,20 @@ elif [[ "$1" == "consul_address" ]];then shift
 
 elif [[ "$1" == "push" ]];then shift
   : ${service_name:="foo"}
-  : ${name:="alert"}
   : ${value:="1"}
   : ${labels:=""}
-  docker exec alpine /bin/sh -c "echo '${name}{${labels}} ${value}' | curl -XPUT --data-binary @- -i -s http://$(${0} consul_address ${service_name})/metrics/job/${name}"
+  : ${job_name:="alert"}
+  : ${metric_name:="${job_name}"}
+  : ${name:="${job_name}"}
+  docker exec alpine /bin/sh -c "echo '${metric_name}{name=\"${name}\"${labels}} ${value}' | curl -XPUT --data-binary @- -i -s http://$(${0} consul_address ${service_name})/metrics/job/${job_name}/name/${name}"
+
+elif [[ "$1" == "push_delete" ]];then shift
+  : ${service_name:="foo"}
+  : ${labels:=""}
+  : ${job_name:="alert"}
+  : ${metric_name:="${job_name}"}
+  : ${name:="${job_name}"}
+  docker exec alpine /bin/sh -c "curl -XDELETE -i -s http://$(${0} consul_address ${service_name})/metrics/job/${job_name}/name/${name}"
 
 elif [[ "$1" == "alpine_curl" ]];then shift
   url="$1"; shift
